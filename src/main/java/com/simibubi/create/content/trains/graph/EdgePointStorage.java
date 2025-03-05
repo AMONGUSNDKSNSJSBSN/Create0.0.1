@@ -1,7 +1,6 @@
 package com.simibubi.create.content.trains.graph;
 
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.UUID;
@@ -9,18 +8,15 @@ import java.util.UUID;
 import com.simibubi.create.Create;
 import com.simibubi.create.content.trains.signal.TrackEdgePoint;
 
+import it.unimi.dsi.fastutil.objects.Object2ObjectMap;
+import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import net.createmod.catnip.nbt.NBTHelper;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 
 public class EdgePointStorage {
-
-	private Map<EdgePointType<?>, Map<UUID, TrackEdgePoint>> pointsByType;
-
-	public EdgePointStorage() {
-		pointsByType = new HashMap<>();
-	}
+	private final Object2ObjectMap<EdgePointType<?>, Map<UUID, TrackEdgePoint>> pointsByType = new Object2ObjectOpenHashMap<>();
 
 	public <T extends TrackEdgePoint> void put(EdgePointType<T> type, TrackEdgePoint point) {
 		getMap(type).put(point.getId(), point);
@@ -45,7 +41,7 @@ public class EdgePointStorage {
 	}
 
 	public Map<UUID, TrackEdgePoint> getMap(EdgePointType<? extends TrackEdgePoint> type) {
-		return pointsByType.computeIfAbsent(type, t -> new HashMap<>());
+		return pointsByType.computeIfAbsent(type, t -> new Object2ObjectOpenHashMap<>());
 	}
 
 	public void tick(TrackGraph graph, boolean preTrains) {
@@ -70,10 +66,10 @@ public class EdgePointStorage {
 			EdgePointType<?> type = entry.getKey();
 			ListTag list = NBTHelper.writeCompoundList(entry.getValue()
 				.values(), edgePoint -> {
-					CompoundTag tag = new CompoundTag();
-					edgePoint.write(tag, dimensions);
-					return tag;
-				});
+				CompoundTag tag = new CompoundTag();
+				edgePoint.write(tag, dimensions);
+				return tag;
+			});
 			nbt.put(type.getId()
 				.toString(), list);
 		}

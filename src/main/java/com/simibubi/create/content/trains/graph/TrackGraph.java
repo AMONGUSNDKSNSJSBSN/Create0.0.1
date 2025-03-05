@@ -4,7 +4,6 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -13,7 +12,6 @@ import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
 
 import javax.annotation.Nullable;
 
@@ -25,6 +23,13 @@ import com.simibubi.create.content.trains.signal.TrackEdgePoint;
 import com.simibubi.create.content.trains.track.BezierConnection;
 import com.simibubi.create.content.trains.track.TrackMaterial;
 
+import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.objects.Object2ObjectMap;
+import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.objects.Object2ReferenceMap;
+import it.unimi.dsi.fastutil.objects.Object2ReferenceOpenHashMap;
+import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+import it.unimi.dsi.fastutil.objects.ObjectList;
 import net.createmod.catnip.data.Couple;
 import net.createmod.catnip.data.Pair;
 import net.createmod.catnip.math.VecHelper;
@@ -40,21 +45,21 @@ import net.minecraft.world.phys.Vec3;
 
 public class TrackGraph {
 
-	public static final AtomicInteger graphNetIdGenerator = new AtomicInteger();
-	public static final AtomicInteger nodeNetIdGenerator = new AtomicInteger();
+	public static final AtomicInteger GRAPH_NET_ID_GENERATOR = new AtomicInteger();
+	public static final AtomicInteger NODE_NET_ID_GENERATOR = new AtomicInteger();
 
 	public UUID id;
 	public Color color;
 
-	Map<TrackNodeLocation, TrackNode> nodes;
-	Map<Integer, TrackNode> nodesById;
-	Map<TrackNode, Map<TrackNode, TrackEdge>> connectionsByNode;
-	EdgePointStorage edgePoints;
-	Map<ResourceKey<Level>, TrackGraphBounds> bounds;
+	Object2ObjectMap<TrackNodeLocation, TrackNode> nodes = new Object2ObjectOpenHashMap<>();
+	Int2ObjectOpenHashMap<TrackNode> nodesById = new Int2ObjectOpenHashMap<>();
+	Object2ReferenceMap<TrackNode, Object2ReferenceMap<TrackNode, TrackEdge>> connectionsByNode = new Object2ReferenceOpenHashMap<>();
+	Object2ObjectMap<ResourceKey<Level>, TrackGraphBounds> bounds = new Object2ObjectOpenHashMap<>();
+	EdgePointStorage edgePoints = new EdgePointStorage();
 
-	List<TrackEdge> deferredIntersectionUpdates;
+	ObjectList<TrackEdge> deferredIntersectionUpdates = new ObjectArrayList<>();
 
-	int netId;
+	int netId = nextGraphId();
 	int checksum = 0;
 
 	public TrackGraph() {
@@ -63,13 +68,6 @@ public class TrackGraph {
 
 	public TrackGraph(UUID graphID) {
 		setId(graphID);
-		nodes = new HashMap<>();
-		nodesById = new HashMap<>();
-		bounds = new HashMap<>();
-		connectionsByNode = new IdentityHashMap<>();
-		edgePoints = new EdgePointStorage();
-		deferredIntersectionUpdates = new ArrayList<>();
-		netId = nextGraphId();
 	}
 
 	//
@@ -106,7 +104,8 @@ public class TrackGraph {
 	//
 
 	public TrackGraphBounds getBounds(Level level) {
-		return bounds.computeIfAbsent(level.dimension(), dim -> new TrackGraphBounds(this, dim));
+		ResourceKey<Level> dim = level.dimension();
+		return bounds.computeIfAbsent(level.dimension(), (o) -> new TrackGraphBounds(this, dim));
 	}
 
 	public void invalidateBounds() {
@@ -181,8 +180,8 @@ public class TrackGraph {
 		if (!connectionsByNode.containsKey(removed))
 			return true;
 
-		Map<TrackNode, TrackEdge> connections = connectionsByNode.remove(removed);
-		for (Entry<TrackNode, TrackEdge> entry : connections.entrySet()) {
+		Object2ReferenceMap<TrackNode, TrackEdge> connections = connectionsByNode.remove(removed);
+		for (Entry<TrackNode, TrackEdge> entry : connections.object2ReferenceEntrySet()) {
 			TrackEdge trackEdge = entry.getValue();
 			EdgeData edgeData = trackEdge.getEdgeData();
 			for (TrackEdgePoint point : edgeData.getPoints()) {
@@ -233,11 +232,11 @@ public class TrackGraph {
 	}
 
 	public static int nextNodeId() {
-		return nodeNetIdGenerator.incrementAndGet();
+		return NODE_NET_ID_GENERATOR.incrementAndGet();
 	}
 
 	public static int nextGraphId() {
-		return graphNetIdGenerator.incrementAndGet();
+		return GRAPH_NET_ID_GENERATOR.incrementAndGet();
 	}
 
 	public void transferAll(TrackGraph toOther) {
@@ -325,9 +324,8 @@ public class TrackGraph {
 
 	public int getChecksum() {
 		if (checksum == 0)
-			checksum = nodes.values()
-				.stream()
-				.collect(Collectors.summingInt(TrackNode::getNetId));
+			for (TrackNode node : nodes.values())
+				checksum += node.getNetId();
 		return checksum;
 	}
 
@@ -336,7 +334,7 @@ public class TrackGraph {
 		target.invalidateBounds();
 
 		TrackNodeLocation nodeLoc = node.getLocation();
-		Map<TrackNode, TrackEdge> connections = getConnectionsFrom(node);
+		Object2ReferenceMap<TrackNode, TrackEdge> connections = getConnectionsFrom(node);
 		Map<UUID, Train> trains = Create.RAILWAYS.sided(level).trains;
 
 		if (!connections.isEmpty()) {
@@ -370,10 +368,10 @@ public class TrackGraph {
 		return nodes.isEmpty();
 	}
 
-	public Map<TrackNode, TrackEdge> getConnectionsFrom(TrackNode node) {
+	public Object2ReferenceMap<TrackNode, TrackEdge> getConnectionsFrom(TrackNode node) {
 		if (node == null)
 			return null;
-		return connectionsByNode.getOrDefault(node, new HashMap<>());
+		return connectionsByNode.getOrDefault(node, new Object2ReferenceOpenHashMap<>());
 	}
 
 	public TrackEdge getConnection(Couple<TrackNode> nodes) {
@@ -395,10 +393,10 @@ public class TrackGraph {
 
 		for (TrackGraph graph : Create.RAILWAYS.trackNetworks.values()) {
 			for (TrackNode otherNode1 : graph.nodes.values()) {
-				Map<TrackNode, TrackEdge> connections = graph.connectionsByNode.get(otherNode1);
+				Object2ReferenceMap<TrackNode, TrackEdge> connections = graph.connectionsByNode.get(otherNode1);
 				if (connections == null)
 					continue;
-				for (Entry<TrackNode, TrackEdge> entry : connections.entrySet()) {
+				for (Entry<TrackNode, TrackEdge> entry : connections.object2ReferenceEntrySet()) {
 					TrackNode otherNode2 = entry.getKey();
 					TrackEdge otherEdge = entry.getValue();
 
@@ -453,7 +451,7 @@ public class TrackGraph {
 	}
 
 	public boolean putConnection(TrackNode node1, TrackNode node2, TrackEdge edge) {
-		Map<TrackNode, TrackEdge> connections = connectionsByNode.computeIfAbsent(node1, n -> new IdentityHashMap<>());
+		Map<TrackNode, TrackEdge> connections = connectionsByNode.computeIfAbsent(node1, n -> new Object2ReferenceOpenHashMap<>());
 		if (connections.containsKey(node2) && connections.get(node2)
 			.getEdgeData()
 			.hasPoints())
